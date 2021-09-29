@@ -9,6 +9,9 @@ library(reshape2)
 library(demography)
 library(purrr)
 
+#Number of prefectures
+PREFEC_COUNT = 47
+
 #Data import
 #function to read all sheets in a single excel workbook
 readExcelAllsheets <- function(filename, tibble = FALSE) {
@@ -135,25 +138,33 @@ pt_female_proj = list()
 
 pt_female_proj = jmd_prefecture_total %>%
     lapply(function(prefec_data){
-        print(deparse(substitute(prefec_data)))
-        proj_matrix = matrix(ncol = 55, nrow = 0)
+        print(deparse(substitute(prefec_data))) #Print indicator
+        proj_matrix = matrix(ncol = 55, nrow = 0) #Matrix of projected pt
         
         for (age in 0:100) {
-            #print(paste("Age:", as.character(age), sep = " "))
             
             forecast_vec = c()
             
+            #Selects only data that matches the current age
             prefec_data_2 = prefec_data[prefec_data$Age == age,]
+            
+            #Gets just year and pt_female columns
             prefec_data_2 = prefec_data_2 %>% select(Year, pt_female)
             
             for (h in 1:10) {
+                #Selects only years in the window
                 series = prefec_data_2 %>%
                     filter(Year < (2009 + h)) 
                 rownames(series) = series$Year
-                series = series %>% select(pt_female)
+                series = series %>% select(pt_female) #1d array
                 
+                #Fits auto.arima
                 forecasts = series %>% auto.arima()
+                
+                #Produces forecasts
                 forecasts = forecasts %>% forecast(h = h)
+                
+                #Appends forecasts to forecast_vec
                 forecast_vec = append(forecast_vec, forecasts$mean)
                 
             }
@@ -196,3 +207,98 @@ pt_male_proj = jmd_prefecture_total %>%
 
 #saveRDS(pt_female_proj, "exp_window/pt_female_proj.rds")
 #saveRDS(pt_male_proj, "exp_window/pt_male_proj.rds")
+
+pt_female_proj = readRDS("exp_window/pt_female_proj.rds")
+pt_male_proj = readRDS("exp_window/pt_male_proj.rds")
+
+#Combine the two pt_proj lists together
+pt_combined_proj = c(pt_female_proj, pt_male_proj)
+names(pt_combined_proj) = 1:length(pt_combined_proj)
+
+#Binds the 10 matrices in each of the prefecture-sex sublists into one matrix
+base_forecasts_vecd = base_forecasts %>% 
+    lapply(function(data){
+        data_matrix = matrix(nrow = 101, ncol = 0)
+        for (m in data) {
+            print(nrow(m))
+            data_matrix = data_matrix %>% cbind(m)
+        }
+        return(data_matrix)
+    })
+
+#Calculates revised forecasts for prefectures
+revised_forecasts_prefec = list()
+
+for (i in 1:PREFEC_COUNT) {
+    fprod = pt_combined_proj[[i]] * base_forecasts_vecd[[i]]
+    mprod = pt_combined_proj[[i + PREFEC_COUNT]] * base_forecasts_vecd[[i + PREFEC_COUNT]]
+    
+    revised_forecast = fprod + mprod
+    revised_forecasts_prefec[[i]] = revised_forecast
+}
+
+names(revised_forecasts_prefec) = names(pt_female_proj)
+
+
+
+
+
+
+##JAPAN-SEX
+jmd_japan = jmd[["Japan"]]
+
+#Calculates summing matrix ratios for each year and age
+jmd_prefecture_total2 = jmd %>% purrr::list_modify("Japan" = NULL)
+
+jmd_prefecture_total2 = jmd_prefecture_total2 %>%
+    lapply(function(prefec_data){
+        prefec_data = merge(prefec_data, jmd_japan, by = c("Year", "Age"))
+        print(colnames(prefec_data))
+        prefec_data = prefec_data[prefec_data$Age <= 100,]
+        
+        #Prefecture exposure / Japan exposure
+        prefec_data$pt_female = prefec_data$E_female.x / prefec_data$E_total.y
+        prefec_data$pt_male = prefec_data$E_male.x / prefec_data$E_total.y
+        prefec_data = prefec_data %>% select(Year, Age, pt_female, pt_male)
+        return(prefec_data)
+    })
+
+#Get projected pt_female
+pt_jpn_female_proj = jmd_prefecture_total2 %>%
+    lapply(function(prefec_data){
+        print(deparse(substitute(prefec_data))) #Print indicator
+        proj_matrix = matrix(ncol = 55, nrow = 0) #Matrix of projected pt
+        
+        for (age in 0:100) {
+            
+            forecast_vec = c()
+            
+            #Selects only data that matches the current age
+            prefec_data_2 = prefec_data[prefec_data$Age == age,]
+            
+            #Gets just year and pt_female columns
+            prefec_data_2 = prefec_data_2 %>% select(Year, pt_female)
+            
+            for (h in 1:10) {
+                #Selects only years in the window
+                series = prefec_data_2 %>%
+                    filter(Year < (2009 + h)) 
+                rownames(series) = series$Year
+                series = series %>% select(pt_female) #1d array
+                
+                #Fits auto.arima
+                forecasts = series %>% auto.arima()
+                
+                #Produces forecasts
+                forecasts = forecasts %>% forecast(h = h)
+                
+                #Appends forecasts to forecast_vec
+                forecast_vec = append(forecast_vec, forecasts$mean)
+                
+            }
+            proj_matrix = proj_matrix %>% rbind(forecast_vec)
+        }
+        rownames(proj_matrix) = 0:100
+        return(proj_matrix)
+    })
+

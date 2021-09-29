@@ -9,7 +9,9 @@ library(reshape2)
 library(demography)
 library(purrr)
 
-##Prefecture 
+###############################################################################
+# FUNCTIONS
+###############################################################################
 
 #function to read all sheets in a single excel workbook
 readExcelAllsheets <- function(filename, tibble = FALSE) {
@@ -81,13 +83,6 @@ jmdToLC = function(table, sex, age_min, age_max, y_start, y_end) {
     return(LCfit)
 }
 
-
-#import data
-jmd = readExcelAllsheets("cleaned_data/jmd.xlsx")
-japan_total = jmd[["Japan"]]
-
-#get lee-carter models for total
-
 expandingWindowLC = function(table, sex) {
     
     forecasts_list = list()
@@ -101,7 +96,15 @@ expandingWindowLC = function(table, sex) {
     return(forecasts_list)
 }
 
-indep_forecasts_total = expandingWindowLC(japan_total, "total")
+###############################################################################
+# DATA PREP
+###############################################################################
+
+
+#import data
+jmd = readExcelAllsheets("cleaned_data/jmd.xlsx")
+japan_total = jmd[["Japan"]]
+
 #get male datasets
 jmd_male = list()
 
@@ -122,13 +125,23 @@ for (table in jmd) {
 }
 names(jmd_female) = paste(names(jmd), "female", sep = "_") 
 
+
+###############################################################################
+# MODELLING
+###############################################################################
+
+
+#get lee-carter models for total
+indep_forecasts_total = expandingWindowLC(japan_total, "total")
+
+#get lee-carter models for sex
 japan_male = jmd_male[["Japan_male"]]
 japan_female = jmd_female[["Japan_female"]]
 
-#get lee-carter models for total
 indep_forecasts_male = expandingWindowLC(japan_male, "male")
 indep_forecasts_female = expandingWindowLC(japan_female, "female")
 
+#get lee-carter models for prefecture
 jmd_prefecture_total = jmd %>% purrr::list_modify("Japan" = NULL)
 
 indep_forecasts_prefectures = list()
@@ -140,9 +153,228 @@ for (prefecture in jmd_prefecture_total) {
 }
 names(indep_forecasts_prefectures) = names(jmd_prefecture_total)
 
-indep_forecasts_prefectures = indep_forecasts_prefectures %>% append(current)
+#get lee-carter models for prefecture-sex
+jmd_prefecfemale = jmd_female %>% 
+    purrr::list_modify("Japan_female" = NULL)
+jmd_prefecmale = jmd_male %>% 
+    purrr::list_modify("Japan_male" = NULL)
 
-saveRDS(indep_forecasts_total, "exp_window/indep_forecasts_total.rds")
-saveRDS(indep_forecasts_male, "exp_window/indep_forecasts_male.rds")
-saveRDS(indep_forecasts_female, "exp_window/indep_forecasts_female.rds")
-saveRDS(indep_forecasts_prefectures, "exp_window/indep_forecasts_prefectures.rds")
+indep_forecasts_prefecsex = list()
+i = 1
+for (prefecture in jmd_prefecfemale) {
+    current = expandingWindowLC(prefecture, "female")
+    indep_forecasts_prefecsex[[i]] = current
+    i = i + 1
+}
+for (prefecture in jmd_prefecmale) {
+    current = expandingWindowLC(prefecture, "male")
+    indep_forecasts_prefecsex[[i]] = current
+    i = i + 1
+}
+
+
+# saveRDS(indep_forecasts_prefecsex, "exp_window/indep_forecasts_prefecsex.rds")
+# saveRDS(indep_forecasts_total, "exp_window/indep_forecasts_total.rds")
+# saveRDS(indep_forecasts_male, "exp_window/indep_forecasts_male.rds")
+# saveRDS(indep_forecasts_female, "exp_window/indep_forecasts_female.rds")
+# saveRDS(indep_forecasts_prefectures, "exp_window/indep_forecasts_prefectures.rds")
+
+
+
+
+################################################################################
+# ERROR CALCULATION
+################################################################################
+
+#Functions
+indexedToCartesian = function(data) {
+    #Convert indexed dataframe into cartesian matrix,
+    #with ages as the rows and years as the columns
+    data = data %>% 
+        select(c(Year, Age, q)) %>%
+        filter(Year >= 2010 & Year < 2020) %>%
+        filter(Age <= 100) %>%
+        pivot_wider(names_from = Year, values_from = q) %>%
+        as.data.frame()
+    rownames(data) = data$Age
+    data = data %>% select(-Age)
+    return(data)
+}
+
+cbindObserved = function(data) {
+    data = do.call(cbind, data)
+    data = list(data)
+    names(data) = "Observed"
+    return(data)
+}
+
+#Calculates MAFE
+calcMafe = function(data){
+    for (i in 0:9) {
+        #print(i)
+        data[[as.character(i)]] = abs(data[[as.character(i)]] - data$Observed)
+        
+        if (i != 9){
+            data$Observed = data$Observed[,-1]    
+        }
+    }
+    
+    return(data[names(data) != "Observed"])
+}
+
+#Gets a final, combined MAFE value for each of the ten years
+
+combineMafe = function(data){
+    mafe_vec = c()
+    for (h in 1:10) {
+        #print(h)
+        a = c() #Vector of all errors that have a h-value of h.
+        for (i in 0:(10 - h)){
+            #print(i)
+            if (i == 0){
+                a = append(a, data[[as.character(i)]][,h])
+            } else if (i == 9) {
+                a = append(a, data[[i]])
+            } else {
+                a = append(a, data[[i]][,h])
+            }
+        }
+        mafe_vec = append(mafe_vec, mean(a))
+    }
+    return(mafe_vec)
+}
+
+#Calculates RMSFE
+
+calcRmsfe = function(data){
+    for (i in 0:9) {
+        #print(i)
+        data[[as.character(i)]] = (data[[as.character(i)]] - data$Observed)^2
+        
+        if (i != 9){
+            data$Observed = data$Observed[,-1]    
+        }
+    }
+    
+    return(data[names(data) != "Observed"])
+}
+
+#Gets a final, combined RMSFE value for each of the ten years
+
+combineRmsfe = function(data){
+    rmsfe_vec = c()
+    for (h in 1:10) {
+        #print(h)
+        a = c()
+        for (i in 0:(10 - h)){
+            #print(i)
+            if (i == 0){
+                a = append(a, data[[as.character(i)]][,h])
+            } else if (i == 9) {
+                a = append(a, data[[i]])
+            } else {
+                a = append(a, data[[i]][,h])
+            }
+        }
+        rmsfe_vec = append(rmsfe_vec, sqrt(mean(a)))
+    }
+    return(rmsfe_vec)
+}
+
+#Combines all the above functions into one
+fullErrorCalc = function(forecasted, observed) {
+    observed = observed %>%
+        lapply(indexedToCartesian) %>%
+        lapply(cbindObserved)
+    
+    #Combines the observed and forecasted data together
+    forecasted_observed = Map(c, forecasted, observed)
+    
+    mafe = forecasted_observed %>%
+        lapply(calcMafe) %>%
+        lapply(combineMafe)
+    
+    mafe = Reduce(`+`, mafe)
+    mafe = mafe / length(forecasted_observed)
+    
+    rmsfe = forecasted_observed %>%
+        lapply(calcRmsfe) %>%
+        lapply(combineRmsfe)
+    
+    rmsfe = Reduce(`+`, rmsfe)
+    rmsfe = rmsfe / length(forecasted_observed)
+    
+    return(list("MAFE" = mafe, 
+                "RMSFE" = rmsfe))
+}
+
+#################### PREFECTURE-SEX
+
+# START HERE
+indep_forecasts_prefecsex = readRDS("exp_window/indep_forecasts_prefecsex.rds")
+names(indep_forecasts_prefecsex) = names(c(jmd_prefecfemale, jmd_prefecmale))
+
+jmd_prefecfemale = jmd_female %>% 
+    purrr::list_modify("Japan_female" = NULL)
+jmd_prefecmale = jmd_male %>% 
+    purrr::list_modify("Japan_male" = NULL)
+
+#Add death rate to observed prefecture-sex mortality data
+jmd_prefecfemale = lapply(jmd_prefecfemale, function(data){
+    data$q = data$d_female / data$E_female 
+    return(data)
+})
+
+jmd_prefecmale = lapply(jmd_prefecmale, function(data){
+    data$q = data$d_male / data$E_male 
+    return(data)
+})
+
+#Combine male and female data together
+jmd_prefecsex_observed = c(jmd_prefecfemale, jmd_prefecmale)
+
+prefecsex_errors = fullErrorCalc(indep_forecasts_prefecsex, 
+                                 jmd_prefecsex_observed)
+
+#################### PREFECTURE
+indep_forecasts_prefectures = readRDS("exp_window/
+                                      indep_forecasts_prefectures.rds")
+names(indep_forecasts_prefectures) = names(jmd_prefecture_total)
+
+#Add death rate to observed prefecture mortality data
+jmd_prefecture_total = lapply(jmd_prefecture_total, function(data){
+    data$q = data$d_total / data$E_total
+    return(data)
+})
+
+prefec_errors = fullErrorCalc(indep_forecasts_prefectures, 
+                              jmd_prefecture_total)
+
+#################### JAPAN-SEX
+indep_forecasts_male = readRDS("exp_window/indep_forecasts_male.rds")
+indep_forecasts_female = readRDS("exp_window/indep_forecasts_female.rds")
+
+japan_male = jmd_male[["Japan_male"]]
+japan_female = jmd_female[["Japan_female"]]
+
+#Add death rate to observed sex mortality data
+japan_female$q = japan_female$d_female / japan_female$E_female 
+japan_male$q = japan_male$d_male / japan_male$E_male 
+
+#Combine male and female data together
+jmd_sex_observed = c(list(japan_female), list(japan_male))
+indep_forecasts_sex = c(list(indep_forecasts_female), 
+                        list(indep_forecasts_male))
+
+japan_sex_errors = fullErrorCalc(indep_forecasts_sex, 
+                              jmd_sex_observed)
+
+#################### JAPAN
+indep_forecasts_total = readRDS("exp_window/indep_forecasts_total.rds")
+
+japan_total$q = japan_total$d_total / japan_total$E_total
+
+japan_total = c(list(japan_total))
+indep_forecasts_total = c(list(indep_forecasts_total))
+
+japan_errors = fullErrorCalc(indep_forecasts_total, japan_total)
