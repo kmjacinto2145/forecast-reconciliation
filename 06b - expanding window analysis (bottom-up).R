@@ -243,8 +243,8 @@ pt_female_proj = jmd_prefecture_total %>%
 pt_male_proj = jmd_prefecture_total %>%
     mclapply(ptMaleGet)
 
-#saveRDS(pt_female_proj, "exp_window/pt_female_proj.rds")
-#saveRDS(pt_male_proj, "exp_window/pt_male_proj.rds")
+# saveRDS(pt_female_proj, "exp_window/pt_female_proj.rds")
+# saveRDS(pt_male_proj, "exp_window/pt_male_proj.rds")
 
 pt_female_proj = readRDS("exp_window/pt_female_proj.rds")
 pt_male_proj = readRDS("exp_window/pt_male_proj.rds")

@@ -259,3 +259,8 @@ japan_total = c(list(japan_total))
 indep_forecasts_total = c(list(indep_forecasts_total))
 
 japan_errors = fullErrorCalc(indep_forecasts_total, japan_total)
+
+capture.output(prefecsex_errors, file = "exp_window/prefecsex_errors.csv")
+capture.output(prefec_errors, file = "exp_window/prefec_errors.csv")
+capture.output(japan_sex_errors, file = "exp_window/japan_sex_errors.csv")
+capture.output(japan_errors, file = "exp_window/japan_errors.csv")
